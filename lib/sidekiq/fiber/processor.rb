@@ -1,5 +1,4 @@
 require "async"
-require "async/semaphore"
 require "sidekiq/processor"
 require_relative "stats"
 
@@ -24,61 +23,74 @@ module Sidekiq
     class Processor < Sidekiq::Processor
       def initialize(capsule, &block)
         super
-        @fiber_concurrency = capsule.config[:fiber_concurrency] || 100
-        @stats = Stats.new(capsule.redis_pool)
+        @fiber_concurrency  = capsule.config[:fiber_concurrency] || 100
+        @active_fibers      = 0
+        @active_fibers_lock = Mutex.new
+        stats_pool = capsule.config.new_redis_pool(@fiber_concurrency, "sidekiq-fiber-stats")
+        @stats = Stats.new(stats_pool)
       end
 
       private
 
-      # Replaces the default run loop. Instead of processing one job at a time,
-      # we start an Async event loop and schedule each fiber job as a child task.
-      # The semaphore prevents unbounded fiber growth.
+      # Replaces the default run loop with a fixed pool of fiber workers.
+      #
+      # We spawn exactly fiber_concurrency persistent fibers. Each fiber owns
+      # its own fetch-process loop: it fetches one job, processes it, then
+      # fetches the next. This means jobs stay in Redis until there is actual
+      # capacity — we never drain the queue into memory ahead of processing.
+      #
+      # The previous design (single fetch loop + semaphore) fetched unboundedly
+      # fast, pulling all queued jobs into pending async tasks before any fiber
+      # started working. With 5000 jobs enqueued that meant 5000 tasks created
+      # instantly, all invisible to the Sidekiq UI.
       def run
         Thread.current[:sidekiq_capsule] = @capsule
 
         thread_id = Thread.current.object_id.to_s
-        semaphore = Async::Semaphore.new(@fiber_concurrency)
 
         @stats.register_thread(thread_id: thread_id, fiber_concurrency: @fiber_concurrency)
 
         Async do |task|
-          until @done
-            uow = fetch
-            next unless uow
+          workers = @fiber_concurrency.times.map do
+            task.async do
+              until @done
+                uow = fetch
+                unless uow
+                  task.yield  # nothing in queue — yield so other fibers can run
+                  next
+                end
 
-            klass_name = begin
-              Sidekiq.load_json(uow.job)["class"]
-            rescue
-              nil
-            end
+                klass_name = begin
+                  Sidekiq.load_json(uow.job)["class"]
+                rescue
+                  nil
+                end
 
-            is_fiber_job = klass_name &&
-              Object.const_get(klass_name).include?(Sidekiq::Fiber::Worker)
+                is_fiber_job = klass_name &&
+                  Object.const_get(klass_name).include?(Sidekiq::Fiber::Worker)
 
-            if is_fiber_job
-              task.async do
-                semaphore.acquire do
-                  @stats.update_thread_stats(
-                    thread_id:         thread_id,
-                    semaphore_size:    @fiber_concurrency,
-                    semaphore_acquired: semaphore.count
-                  )
-                  process_in_fiber(uow, thread_id: thread_id)
+                if is_fiber_job
+                  active = @active_fibers_lock.synchronize { @active_fibers += 1 }
                   @stats.update_thread_stats(
                     thread_id:          thread_id,
                     semaphore_size:     @fiber_concurrency,
-                    semaphore_acquired: semaphore.count
+                    semaphore_acquired: active
                   )
+                  process_in_fiber(uow, thread_id: thread_id)
+                  active = @active_fibers_lock.synchronize { @active_fibers -= 1 }
+                  @stats.update_thread_stats(
+                    thread_id:          thread_id,
+                    semaphore_size:     @fiber_concurrency,
+                    semaphore_acquired: active
+                  )
+                else
+                  process(uow)
                 end
               end
-            else
-              # Non-fiber job: run inline on this thread as normal.
-              # This should not happen if the capsule is correctly configured
-              # to only receive fiber jobs — but we handle it safely.
-              process(uow)
             end
           end
-          # Async waits here for all child tasks to finish before returning.
+
+          workers.each(&:wait)
         end
 
         @stats.deregister_thread(thread_id: thread_id)

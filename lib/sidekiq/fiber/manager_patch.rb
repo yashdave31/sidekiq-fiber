@@ -1,23 +1,27 @@
 require "sidekiq/manager"
+require "sidekiq/capsule"
 
 module Sidekiq
   module Fiber
-    # Patches Sidekiq::Manager to respect a :processor_class config key
-    # on a capsule, mirroring how Sidekiq already supports :fetch_class.
-    #
-    # Without this patch, Manager hardcodes Sidekiq::Processor for every
-    # capsule. With it, a fiber capsule can declare its own processor:
-    #
-    #   config.capsule("fiber") do |cap|
-    #     cap[:processor_class] = Sidekiq::Fiber::Processor
-    #   end
+    # Extends Sidekiq::Capsule with a per-capsule processor_class attribute.
+    # We can't use capsule[:processor_class] because capsule delegates [] to
+    # the global config — setting it would affect all capsules.
+    module CapsulePatch
+      def processor_class=(klass)
+        @processor_class = klass
+      end
+
+      def processor_class
+        @processor_class
+      end
+    end
+
+    # Patches Sidekiq::Manager to respect the per-capsule processor_class.
     module ManagerPatch
       def initialize(capsule)
         super
-        @processor_class = capsule.config[:processor_class] || Sidekiq::Processor
-        # Rebuild @workers using the correct processor class.
-        # super already populated @workers with Sidekiq::Processor instances
-        # so we replace them here.
+        klass = capsule.respond_to?(:processor_class) && capsule.processor_class
+        @processor_class = klass || Sidekiq::Processor
         @workers.clear
         @count.times do
           @workers << @processor_class.new(@config, &method(:processor_result))
@@ -38,4 +42,5 @@ module Sidekiq
   end
 end
 
+Sidekiq::Capsule.prepend(Sidekiq::Fiber::CapsulePatch)
 Sidekiq::Manager.prepend(Sidekiq::Fiber::ManagerPatch)

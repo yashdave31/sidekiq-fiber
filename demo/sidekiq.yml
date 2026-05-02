@@ -1,0 +1,9 @@
+:concurrency: 5
+:queues:
+  - default
+
+:capsules:
+  fiber:
+    :concurrency: 2
+    :queues:
+      - fiber

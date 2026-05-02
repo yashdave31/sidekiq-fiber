@@ -20,7 +20,7 @@ module Sidekiq
 
       # Called when a fiber starts executing a job.
       def fiber_started(jid:, job_class:, thread_id:)
-        @redis.with do |conn|
+        safe_redis do |conn|
           key = fiber_key(jid)
           conn.hset(key,
             "job_class",  job_class,
@@ -31,9 +31,8 @@ module Sidekiq
         end
       end
 
-      # Called when a fiber completes (success or failure).
       def fiber_completed(jid:, thread_id:)
-        @redis.with do |conn|
+        safe_redis do |conn|
           conn.del(fiber_key(jid))
           conn.hincrby(thread_key(thread_id), "completed_total", 1)
           conn.hset(thread_key(thread_id), "last_completed_at", Time.now.to_f)
@@ -41,9 +40,8 @@ module Sidekiq
         end
       end
 
-      # Called periodically from the processor to report semaphore state.
       def update_thread_stats(thread_id:, semaphore_size:, semaphore_acquired:)
-        @redis.with do |conn|
+        safe_redis do |conn|
           conn.hset(thread_key(thread_id),
             "semaphore_size",     semaphore_size,
             "semaphore_acquired", semaphore_acquired
@@ -52,9 +50,8 @@ module Sidekiq
         end
       end
 
-      # Called once at processor boot to register the thread.
       def register_thread(thread_id:, fiber_concurrency:)
-        @redis.with do |conn|
+        safe_redis do |conn|
           conn.sadd(threads_index_key, thread_id)
           conn.expire(threads_index_key, GLOBAL_TTL)
           conn.hset(thread_key(thread_id),
@@ -67,9 +64,8 @@ module Sidekiq
         end
       end
 
-      # Called at processor shutdown to clean up.
       def deregister_thread(thread_id:)
-        @redis.with do |conn|
+        safe_redis do |conn|
           conn.srem(threads_index_key, thread_id)
           conn.del(thread_key(thread_id))
         end
@@ -124,6 +120,13 @@ module Sidekiq
       end
 
       private
+
+      def safe_redis(&block)
+        @redis.with(&block)
+      rescue ConnectionPool::TimeoutError, StandardError
+        # Stats writes are best-effort. A timeout or Redis blip should never
+        # propagate into the fiber and fail the job.
+      end
 
       def fiber_key(jid)        = "#{NAMESPACE}:fiber:#{jid}"
       def thread_key(thread_id) = "#{NAMESPACE}:thread:#{thread_id}"

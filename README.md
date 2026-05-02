@@ -49,7 +49,7 @@ Sidekiq.configure_server do |config|
   config.capsule("fiber") do |cap|
     cap.concurrency = 20           # threads
     cap.queues      = ["llm_jobs", "api_calls"]
-    cap[:processor_class] = Sidekiq::Fiber::Processor
+    cap.processor_class = Sidekiq::Fiber::Processor
   end
 end
 ```

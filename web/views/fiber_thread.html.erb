@@ -1,5 +1,3 @@
-<%= erb(:layout) do %>
-
 <% if @thread_stats.nil? %>
   <p class="text-muted">Thread not found or no longer active.</p>
 <% else %>
@@ -13,7 +11,7 @@
     <th>Last Completed</th>
     <td>
       <% last_at = @thread_stats["last_completed_at"].to_f %>
-      <%= last_at > 0 ? "#{(Time.now.to_f - last_at).round}s ago" : "—" %>
+      <%= last_at > 0 ? "#{(Time.now.to_f - last_at).round}s ago" : "&#8212;" %>
     </td>
   </tr>
 </table>
@@ -45,5 +43,3 @@
 <% end %>
 
 <p><a href="<%= root_path %>fiber-stats">&larr; Back to Fiber Overview</a></p>
-
-<% end %>

@@ -1,0 +1,10 @@
+source "https://rubygems.org"
+
+ruby "3.2.2"
+
+gem "sidekiq", "~> 7.0"
+gem "async", ">= 2.0"
+gem "sidekiq-fiber", path: ".."
+gem "puma"
+gem "rack"
+gem "rack-session"
