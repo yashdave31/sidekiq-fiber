@@ -1,5 +1,6 @@
 require "async"
 require "async/semaphore"
+require "sidekiq/processor"
 
 module Sidekiq
   module Fiber

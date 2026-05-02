@@ -1,3 +1,5 @@
+require "sidekiq/manager"
+
 module Sidekiq
   module Fiber
     # Patches Sidekiq::Manager to respect a :processor_class config key
