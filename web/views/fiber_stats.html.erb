@@ -1,0 +1,137 @@
+<%= erb(:layout) do %>
+
+<h3>Fiber Overview</h3>
+
+<!-- Global Summary -->
+<div class="row">
+  <div class="col-sm-3">
+    <div class="panel panel-default">
+      <div class="panel-body text-center">
+        <h1><%= @global[:total_active] %> / <%= @global[:total_max] %></h1>
+        <p class="text-muted">Active Fibers / Max</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-3">
+    <div class="panel panel-default">
+      <div class="panel-body text-center">
+        <h1><%= @global[:thread_count] %></h1>
+        <p class="text-muted">Fiber Threads</p>
+      </div>
+    </div>
+  </div>
+  <div class="col-sm-3">
+    <div class="panel panel-default">
+      <div class="panel-body text-center">
+        <h1><%= @in_flight.size %></h1>
+        <p class="text-muted">In-Flight Fibers</p>
+      </div>
+    </div>
+  </div>
+  <% if @db_pool_size %>
+  <div class="col-sm-3">
+    <div class="panel panel-<%= @global[:total_max] > @db_pool_size ? "danger" : "default" %>">
+      <div class="panel-body text-center">
+        <h1><%= @global[:total_max] %> / <%= @db_pool_size %></h1>
+        <p class="text-muted">Max Fiber Conns / DB Pool</p>
+        <% if @global[:total_max] > @db_pool_size %>
+          <p class="text-danger"><strong>⚠ Exceeds DB pool size</strong><br>
+          Reduce fiber_concurrency to &le; <%= (@db_pool_size.to_f / [@global[:thread_count], 1].max).floor %></p>
+        <% end %>
+      </div>
+    </div>
+  </div>
+  <% end %>
+</div>
+
+<!-- Per-Thread Breakdown -->
+<h3>Threads</h3>
+<% if @thread_stats.empty? %>
+  <p class="text-muted">No fiber threads registered. Is the fiber capsule running?</p>
+<% else %>
+<table class="table table-bordered table-striped">
+  <thead>
+    <tr>
+      <th>Thread</th>
+      <th>Semaphore</th>
+      <th>Utilization</th>
+      <th>Completed (total)</th>
+      <th>Last Completed</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @thread_stats.each do |t| %>
+      <%
+        acquired   = t["semaphore_acquired"].to_i
+        size       = t["semaphore_size"].to_i
+        pct        = size > 0 ? ((acquired.to_f / size) * 100).round : 0
+        last_at    = t["last_completed_at"].to_f
+        idle_secs  = last_at > 0 ? (Time.now.to_f - last_at).round : nil
+        stalled    = acquired > 0 && idle_secs && idle_secs > 60
+      %>
+      <tr>
+        <td><code><%= t["thread_id"] %></code></td>
+        <td><%= acquired %> / <%= size %></td>
+        <td>
+          <div class="progress" style="margin-bottom:0">
+            <div class="progress-bar <%= pct > 90 ? "progress-bar-danger" : pct > 70 ? "progress-bar-warning" : "progress-bar-success" %>"
+                 style="width:<%= pct %>%"><%= pct %>%</div>
+          </div>
+        </td>
+        <td><%= t["completed_total"].to_i %></td>
+        <td><%= idle_secs ? "#{idle_secs}s ago" : "—" %></td>
+        <td>
+          <% if stalled %>
+            <span class="label label-danger">⚠ Possible blocking IO</span>
+          <% elsif pct == 100 %>
+            <span class="label label-warning">Semaphore full</span>
+          <% else %>
+            <span class="label label-success">Healthy</span>
+          <% end %>
+        </td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+<% end %>
+
+<!-- In-Flight Fibers (long-running) -->
+<h3>In-Flight Fibers</h3>
+<% long_running = @in_flight.select { |f| f["running_for"].to_f > 30 } %>
+<% if @in_flight.empty? %>
+  <p class="text-muted">No fibers currently running.</p>
+<% else %>
+<table class="table table-bordered table-striped">
+  <thead>
+    <tr>
+      <th>JID</th>
+      <th>Job Class</th>
+      <th>Thread</th>
+      <th>Running For</th>
+      <th>Status</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @in_flight.each do |f| %>
+      <tr>
+        <td><code><%= f["jid"] %></code></td>
+        <td><%= f["job_class"] %></td>
+        <td><code><%= f["thread_id"] %></code></td>
+        <td><%= f["running_for"] %>s</td>
+        <td>
+          <% if f["running_for"].to_f > 120 %>
+            <span class="label label-danger">⚠ Long running</span>
+          <% elsif f["running_for"].to_f > 30 %>
+            <span class="label label-warning">Slow</span>
+          <% else %>
+            <span class="label label-success">Normal</span>
+          <% end %>
+        </td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+<% end %>
+
+<% end %>

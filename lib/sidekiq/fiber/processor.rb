@@ -1,6 +1,7 @@
 require "async"
 require "async/semaphore"
 require "sidekiq/processor"
+require_relative "stats"
 
 module Sidekiq
   module Fiber
@@ -24,6 +25,7 @@ module Sidekiq
       def initialize(capsule, &block)
         super
         @fiber_concurrency = capsule.config[:fiber_concurrency] || 100
+        @stats = Stats.new(capsule.redis_pool)
       end
 
       private
@@ -34,7 +36,10 @@ module Sidekiq
       def run
         Thread.current[:sidekiq_capsule] = @capsule
 
+        thread_id = Thread.current.object_id.to_s
         semaphore = Async::Semaphore.new(@fiber_concurrency)
+
+        @stats.register_thread(thread_id: thread_id, fiber_concurrency: @fiber_concurrency)
 
         Async do |task|
           until @done
@@ -53,7 +58,17 @@ module Sidekiq
             if is_fiber_job
               task.async do
                 semaphore.acquire do
-                  process_in_fiber(uow)
+                  @stats.update_thread_stats(
+                    thread_id:         thread_id,
+                    semaphore_size:    @fiber_concurrency,
+                    semaphore_acquired: semaphore.count
+                  )
+                  process_in_fiber(uow, thread_id: thread_id)
+                  @stats.update_thread_stats(
+                    thread_id:          thread_id,
+                    semaphore_size:     @fiber_concurrency,
+                    semaphore_acquired: semaphore.count
+                  )
                 end
               end
             else
@@ -66,17 +81,20 @@ module Sidekiq
           # Async waits here for all child tasks to finish before returning.
         end
 
+        @stats.deregister_thread(thread_id: thread_id)
         @callback.call(self)
       rescue Sidekiq::Shutdown
+        @stats.deregister_thread(thread_id: Thread.current.object_id.to_s)
         @callback.call(self)
       rescue Exception => ex
+        @stats.deregister_thread(thread_id: Thread.current.object_id.to_s)
         @callback.call(self, ex)
       end
 
       # Runs a single job unit of work inside the current fiber.
       # Mirrors Sidekiq::Processor#process but with per-fiber ack tracking
       # so that hard shutdown can requeue incomplete jobs correctly.
-      def process_in_fiber(uow)
+      def process_in_fiber(uow, thread_id:)
         jobstr   = uow.job
         queue    = uow.queue_name
         job_hash = nil
@@ -88,7 +106,11 @@ module Sidekiq
           return uow.acknowledge
         end
 
-        ack = false
+        jid       = job_hash["jid"]
+        job_class = job_hash["class"]
+        ack       = false
+
+        @stats.fiber_started(jid: jid, job_class: job_class, thread_id: thread_id)
 
         begin
           dispatch(job_hash, queue, jobstr) do |instance|
@@ -112,6 +134,7 @@ module Sidekiq
           handle_exception(ex, { context: "Internal exception!", job: job_hash, jobstr: jobstr })
           raise ex
         ensure
+          @stats.fiber_completed(jid: jid, thread_id: thread_id)
           uow.acknowledge if ack
         end
       end

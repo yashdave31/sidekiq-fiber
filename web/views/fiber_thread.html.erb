@@ -1,0 +1,49 @@
+<%= erb(:layout) do %>
+
+<% if @thread_stats.nil? %>
+  <p class="text-muted">Thread not found or no longer active.</p>
+<% else %>
+
+<h3>Thread <code><%= @thread_stats["thread_id"] %></code></h3>
+
+<table class="table table-bordered" style="max-width:500px">
+  <tr><th>Semaphore</th><td><%= @thread_stats["semaphore_acquired"] %> / <%= @thread_stats["semaphore_size"] %></td></tr>
+  <tr><th>Completed (total)</th><td><%= @thread_stats["completed_total"].to_i %></td></tr>
+  <tr>
+    <th>Last Completed</th>
+    <td>
+      <% last_at = @thread_stats["last_completed_at"].to_f %>
+      <%= last_at > 0 ? "#{(Time.now.to_f - last_at).round}s ago" : "—" %>
+    </td>
+  </tr>
+</table>
+
+<h3>In-Flight Fibers on This Thread</h3>
+<% if @in_flight.empty? %>
+  <p class="text-muted">No fibers currently running on this thread.</p>
+<% else %>
+<table class="table table-bordered table-striped">
+  <thead>
+    <tr>
+      <th>JID</th>
+      <th>Job Class</th>
+      <th>Running For</th>
+    </tr>
+  </thead>
+  <tbody>
+    <% @in_flight.each do |f| %>
+      <tr>
+        <td><code><%= f["jid"] %></code></td>
+        <td><%= f["job_class"] %></td>
+        <td><%= f["running_for"] %>s</td>
+      </tr>
+    <% end %>
+  </tbody>
+</table>
+<% end %>
+
+<% end %>
+
+<p><a href="<%= root_path %>fiber-stats">&larr; Back to Fiber Overview</a></p>
+
+<% end %>

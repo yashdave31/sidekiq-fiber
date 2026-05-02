@@ -77,7 +77,7 @@ RSpec.describe Sidekiq::Fiber::Processor do
       processor = Sidekiq::Fiber::Processor.new(capsule) {}
 
       expect(uow).to receive(:acknowledge)
-      processor.send(:process_in_fiber, uow)
+      processor.send(:process_in_fiber, uow, thread_id: "test-thread")
     end
 
     it "does not acknowledge a job that raises before completion" do
@@ -98,7 +98,7 @@ RSpec.describe Sidekiq::Fiber::Processor do
       allow(processor).to receive(:dispatch).and_yield(FailingTestJob.new)
 
       expect(uow).not_to receive(:acknowledge)
-      expect { processor.send(:process_in_fiber, uow) }.to raise_error(RuntimeError, "boom")
+      expect { processor.send(:process_in_fiber, uow, thread_id: "test-thread") }.to raise_error(RuntimeError, "boom")
     end
   end
 
@@ -129,7 +129,7 @@ RSpec.describe Sidekiq::Fiber::Processor do
 
         tasks = uows.map do |uow|
           task.async do
-            semaphore.acquire { processor.send(:process_in_fiber, uow) }
+            semaphore.acquire { processor.send(:process_in_fiber, uow, thread_id: "test-thread") }
           end
         end
 
