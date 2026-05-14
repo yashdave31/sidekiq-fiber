@@ -19,7 +19,7 @@ RSpec.describe Sidekiq::Fiber::ManagerPatch do
   context "when processor_class is set to Sidekiq::Fiber::Processor" do
     it "instantiates the custom processor class" do
       capsule = Sidekiq::Capsule.new("fiber", config)
-      capsule[:processor_class] = Sidekiq::Fiber::Processor
+      capsule.processor_class = Sidekiq::Fiber::Processor
 
       manager = Sidekiq::Manager.new(capsule)
 
@@ -28,7 +28,7 @@ RSpec.describe Sidekiq::Fiber::ManagerPatch do
 
     it "creates the correct number of processors" do
       capsule = Sidekiq::Capsule.new("fiber", config)
-      capsule[:processor_class] = Sidekiq::Fiber::Processor
+      capsule.processor_class = Sidekiq::Fiber::Processor
       capsule.concurrency = 3
 
       manager = Sidekiq::Manager.new(capsule)

@@ -1,4 +1,5 @@
 require "sidekiq-fiber"
+require "async/semaphore"
 require "sidekiq/testing"
 
 Sidekiq::Testing.fake!
